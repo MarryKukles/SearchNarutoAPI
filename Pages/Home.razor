@@ -1,0 +1,420 @@
+﻿
+@page "/"
+@using System.Text.Json
+@using SearchNarutoAPI.Models
+@inject SearchNarutoAPI.Services.NarutoApiService NarutoService
+
+<PageTitle>Search Naruto API</PageTitle>
+
+<div class="hero">
+    <div class="hero-content">
+        <span class="hero-tag">DATTEBAYO API</span>
+
+        <h1>Search Naruto API</h1>
+
+        <p>
+            Explore os personagens, clãs e habilidades
+            do universo Naruto.
+        </p>
+
+        <div class="search-container">
+            <input
+                type="text"
+                placeholder="Digite o nome do personagem..."
+                @bind="searchText"
+                @bind:event="oninput"
+                @onkeydown="HandleKeyDown" />
+
+            <button @onclick="SearchCharacters">
+                <span>Pesquisar</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<main class="container">
+
+    <div class="section-header">
+        <div>
+            <h2>Personagens</h2>
+            <p>Conheça os ninjas do universo Naruto.</p>
+        </div>
+
+        <span class="total">
+            @totalCharacters personagens
+        </span>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Carregando personagens...</p>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="message error">
+            @errorMessage
+            <button @onclick="LoadCharacters">
+                Tentar novamente
+            </button>
+        </div>
+    }
+    else if (characters.Count == 0)
+    {
+        <div class="message">
+            Nenhum personagem encontrado.
+        </div>
+    }
+    else
+    {
+        <div class="character-grid">
+
+            @foreach (var character in characters)
+            {
+                <article class="character-card" @key="character.Id">
+
+                    @if (character.Images.Count > 0)
+                    {
+                        <img
+                            src="@character.Images[0]"
+                            alt="@character.Name"
+                            class="character-image"
+                            loading="lazy"
+                            @onerror="(e) => { }" />
+                    }
+                    else
+                    {
+                        <div class="no-image">
+                            Imagem indisponível
+                        </div>
+                    }
+
+                    <div class="character-content">
+
+                        <span class="character-id">
+                            ID: @character.Id
+                        </span>
+
+                        <h3>@character.Name</h3>
+
+                        <div class="character-info">
+                            <p>
+                                <strong>Clã / Afiliação:</strong>
+                                @GetClan(character)
+                            </p>
+
+                            <p>
+                                <strong>Patente:</strong>
+                                @GetRank(character)
+                            </p>
+                        </div>
+
+                        <button
+                            class="details-button"
+                            @onclick="() => ShowDetails(character.Id)">
+                            Ver detalhes
+                        </button>
+
+                    </div>
+                </article>
+            }
+
+        </div>
+
+        <div class="pagination">
+
+            <button
+                disabled="@(currentPage <= 1)"
+                @onclick="PreviousPage">
+                Anterior
+            </button>
+
+            <span>
+                Página @currentPage
+                @if (totalPages > 0)
+                {
+                    <span> de @totalPages</span>
+                }
+            </span>
+
+            <button
+                disabled="@(currentPage >= totalPages)"
+                @onclick="NextPage">
+                Próxima
+            </button>
+
+        </div>
+    }
+
+</main>
+
+@if (selectedCharacter != null)
+{
+    <div class="modal-overlay" @onclick="CloseDetails">
+
+        <div class="modal-content" @onclick:stopPropagation="true">
+
+            <button class="close-button" @onclick="CloseDetails">
+                &times;
+            </button>
+
+            <h2>@selectedCharacter.Name</h2>
+
+            @if (selectedCharacter.Images.Count > 0)
+            {
+                <img
+                    src="@selectedCharacter.Images[0]"
+                    alt="@selectedCharacter.Name"
+                    class="modal-image" />
+            }
+
+            <div class="detail-section">
+                <h3>Informações pessoais</h3>
+
+                <p>
+                    <strong>ID:</strong>
+                    @selectedCharacter.Id
+                </p>
+
+                <p>
+                    <strong>Clã / Afiliação:</strong>
+                    @GetClan(selectedCharacter)
+                </p>
+
+                <p>
+                    <strong>Patente ninja:</strong>
+                    @GetRank(selectedCharacter)
+                </p>
+            </div>
+
+            <div class="detail-section">
+                <h3>Jutsus</h3>
+
+                @if (selectedCharacter.Jutsu.ValueKind == JsonValueKind.Array
+                    && selectedCharacter.Jutsu.GetArrayLength() > 0)
+                {
+                    <ul class="jutsu-list">
+                        @foreach (var jutsu in selectedCharacter.Jutsu.EnumerateArray())
+                        {
+                            <li>@FormatJson(jutsu)</li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p>Não há jutsus cadastrados.</p>
+                }
+            </div>
+
+        </div>
+    </div>
+}
+
+@code {
+
+    private List<Character> characters = new();
+
+    private Character? selectedCharacter;
+
+    private string searchText = string.Empty;
+
+    private string errorMessage = string.Empty;
+
+    private bool isLoading = false;
+
+    private int currentPage = 1;
+
+    private int pageSize = 12;
+
+    private int totalCharacters = 0;
+
+    private int totalPages = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCharacters();
+    }
+
+    private async Task LoadCharacters()
+    {
+        isLoading = true;
+        errorMessage = string.Empty;
+
+        try
+        {
+            var result = await NarutoService.GetCharactersAsync(
+                currentPage,
+                pageSize,
+                searchText
+            );
+
+            characters = result.Characters;
+
+            totalCharacters = result.Total > 0
+                ? result.Total
+                : result.Characters.Count;
+
+            totalPages = result.Pages > 0
+                ? result.Pages
+                : (int)Math.Ceiling(
+                    (double)totalCharacters / pageSize
+                );
+        }
+        catch (Exception)
+        {
+            characters = new();
+            totalCharacters = 0;
+            totalPages = 0;
+
+            errorMessage =
+                "Não foi possível carregar os personagens. Verifique sua conexão e tente novamente.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SearchCharacters()
+    {
+        currentPage = 1;
+
+        await LoadCharacters();
+    }
+
+    private async Task HandleKeyDown(
+        Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchCharacters();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+
+            await LoadCharacters();
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+
+            await LoadCharacters();
+        }
+    }
+
+    private async Task ShowDetails(int id)
+    {
+        try
+        {
+            errorMessage = string.Empty;
+
+            selectedCharacter =
+                await NarutoService.GetCharacterByIdAsync(id);
+        }
+        catch (Exception)
+        {
+            errorMessage =
+                "Não foi possível carregar os detalhes do personagem.";
+        }
+    }
+
+    private void CloseDetails()
+    {
+        selectedCharacter = null;
+    }
+
+    private string GetClan(Character character)
+    {
+        if (character.Personal.ValueKind != JsonValueKind.Object)
+        {
+            return "Não informado";
+        }
+
+        if (character.Personal.TryGetProperty("clan", out var clan))
+        {
+            string result = FormatJson(clan);
+
+            if (!string.IsNullOrWhiteSpace(result))
+            {
+                return result;
+            }
+        }
+
+        if (character.Personal.TryGetProperty(
+            "affiliation", out var affiliation))
+        {
+            string result = FormatJson(affiliation);
+
+            if (!string.IsNullOrWhiteSpace(result))
+            {
+                return result;
+            }
+        }
+
+        return "Não informado";
+    }
+
+    private string GetRank(Character character)
+    {
+        if (character.Rank.ValueKind != JsonValueKind.Object)
+        {
+            return "Não informado";
+        }
+
+        if (character.Rank.TryGetProperty(
+            "ninjaRank", out var ninjaRank))
+        {
+            return FormatJson(ninjaRank);
+        }
+
+        return "Não informado";
+    }
+
+    private string FormatJson(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                return element.GetString() ?? "";
+
+            case JsonValueKind.Array:
+                return string.Join(
+                    ", ",
+                    element.EnumerateArray()
+                        .Select(FormatJson)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                );
+
+            case JsonValueKind.Object:
+                return string.Join(
+                    ", ",
+                    element.EnumerateObject()
+                        .Select(property =>
+                            $"{property.Name}: {FormatJson(property.Value)}")
+                );
+
+            case JsonValueKind.Number:
+                return element.ToString();
+
+            case JsonValueKind.True:
+                return "Sim";
+
+            case JsonValueKind.False:
+                return "Não";
+
+            default:
+                return "";
+        }
+    }
+}
